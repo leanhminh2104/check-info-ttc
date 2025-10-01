@@ -3,11 +3,9 @@
 """
 TTC Mobile Login API chạy trên Render.com
 Endpoint:
-    POST /login
-Body JSON:
-    { "username": "...", "password": "..." }
-
-Trả về JSON:
+    GET /
+    Query params: ?username=...&password=...
+Return JSON:
     {
       "co_token": true/false,
       "token": "...",
@@ -19,8 +17,7 @@ Trả về JSON:
     }
 """
 
-import os, re, json, getpass, time, sys
-import requests
+import os, re, json, requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 from flask import Flask, request, jsonify
@@ -42,16 +39,12 @@ SODU_RE = re.compile(r'"sodu"\s*[:=]\s*["\']?([0-9,\.]+)["\']?', re.I)
 SODU_TEXT_RE = re.compile(r'(?:số\s*dư|sodu|xu)[^\d]{0,10}([0-9\.,]{2,})', re.I)
 
 def safe_get(s, url, **kw):
-    try:
-        return s.get(url, timeout=15, **kw)
-    except:
-        return None
+    try: return s.get(url, timeout=15, **kw)
+    except: return None
 
 def safe_post(s, url, data=None, **kw):
-    try:
-        return s.post(url, data=data, timeout=15, **kw)
-    except:
-        return None
+    try: return s.post(url, data=data, timeout=15, **kw)
+    except: return None
 
 def parse_login_form(html, base_url):
     soup = BeautifulSoup(html or "", "html.parser")
@@ -124,7 +117,6 @@ def attempt_tokens(s, tokens):
 
 def login_api(username, password):
     s = requests.Session(); s.headers.update(HEADERS)
-
     rpost = login_with_credentials(s, username, password)
     found = find_sodu_and_tokens(rpost.text) if rpost else {}
     profile_info = get_profile_info(s)
@@ -148,21 +140,15 @@ def login_api(username, password):
         if res.get("data"):
             out["user"] = res["data"].get("user")
             out["sodu"] = res["data"].get("sodu")
-
     return out
 
 # ---------- FLASK APP ----------
 app = Flask(__name__)
 
 @app.route("/")
-def index():
-    return jsonify({"status": "ok", "message": "TTC Login API running"})
-
-@app.route("/login", methods=["POST"])
 def login_route():
-    data = request.get_json(force=True)
-    username = data.get("username")
-    password = data.get("password")
+    username = request.args.get("username")
+    password = request.args.get("password")
     if not username or not password:
         return jsonify({"error": "Missing username/password"}), 400
     result = login_api(username, password)
