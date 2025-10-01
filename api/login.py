@@ -1,7 +1,6 @@
 import requests, re, json
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin
-from http.server import BaseHTTPRequestHandler
+from urllib.parse import urljoin, parse_qs, urlparse
 
 # ---------- CONFIG ----------
 BASE = "https://tuongtaccheo.com"
@@ -129,55 +128,51 @@ def attempt_tokens(s, tokens):
 
 
 # ========== Vercel API Handler ==========
-class handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        from urllib.parse import parse_qs, urlparse
+def handler(request):
+    qs = parse_qs(urlparse(request["url"]).query)
+    username = qs.get("username", [None])[0]
+    password = qs.get("password", [None])[0]
 
-        qs = parse_qs(urlparse(self.path).query)
-        username = qs.get("username", [None])[0]
-        password = qs.get("password", [None])[0]
-
-        if not username or not password:
-            self.send_response(400)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(
-                json.dumps({"error": "username & password required"}).encode()
-            )
-            return
-
-        s = requests.Session()
-        s.headers.update(HEADERS)
-
-        rpost = login_with_credentials(s, username, password)
-        found = find_sodu_and_tokens(rpost.text) if rpost else {}
-        profile_info = get_profile_info(s)
-        for k, v in profile_info.items():
-            if k == "pages":
-                continue
-            found.setdefault(k, v)
-
-        tokens = sorted(set(found.get("hex_like", [])), key=len, reverse=True)
-        token_result = attempt_tokens(s, tokens)
-
-        out = {
-            "co_token": False,
-            "token": None,
-            "use": username,
-            "mk": password,
-            "user": None,
-            "sodu": found.get("sodu"),
-            "pages": profile_info.get("pages", {}),
+    if not username or not password:
+        return {
+            "statusCode": 400,
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps({"error": "username & password required"})
         }
 
-        if token_result:
-            tk, res = token_result["token"], token_result["response"]
-            out.update({"co_token": True, "token": tk})
-            if res.get("data"):
-                out["user"] = res["data"].get("user")
-                out["sodu"] = res["data"].get("sodu")
+    s = requests.Session()
+    s.headers.update(HEADERS)
 
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(json.dumps(out, ensure_ascii=False).encode())
+    rpost = login_with_credentials(s, username, password)
+    found = find_sodu_and_tokens(rpost.text) if rpost else {}
+    profile_info = get_profile_info(s)
+    for k, v in profile_info.items():
+        if k == "pages":
+            continue
+        found.setdefault(k, v)
+
+    tokens = sorted(set(found.get("hex_like", [])), key=len, reverse=True)
+    token_result = attempt_tokens(s, tokens)
+
+    out = {
+        "co_token": False,
+        "token": None,
+        "use": username,
+        "mk": password,
+        "user": None,
+        "sodu": found.get("sodu"),
+        "pages": profile_info.get("pages", {}),
+    }
+
+    if token_result:
+        tk, res = token_result["token"], token_result["response"]
+        out.update({"co_token": True, "token": tk})
+        if res.get("data"):
+            out["user"] = res["data"].get("user")
+            out["sodu"] = res["data"].get("sodu")
+
+    return {
+        "statusCode": 200,
+        "headers": {"Content-Type": "application/json"},
+        "body": json.dumps(out, ensure_ascii=False)
+    }
