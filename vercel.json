@@ -2,7 +2,7 @@
   "version": 2,
   "functions": {
     "api/*.py": {
-      "runtime": "@vercel/python@0.5.2"
+      "runtime": "python3.11"
     }
   },
   "routes": [
@@ -10,6 +10,5 @@
       "src": "/api/(.*)",
       "dest": "/api/$1.py"
     }
-  "builds": [
-    { "src": "Dockerfile", "use": "@vercel/docker" }
+  ]
 }
