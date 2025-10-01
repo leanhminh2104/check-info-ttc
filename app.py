@@ -1,6 +1,29 @@
-import requests, re, json
+#!/usr/bin/env python3
+# app.py
+"""
+TTC Mobile Login API chạy trên Render.com
+Endpoint:
+    POST /login
+Body JSON:
+    { "username": "...", "password": "..." }
+
+Trả về JSON:
+    {
+      "co_token": true/false,
+      "token": "...",
+      "use": "...",
+      "mk": "...",
+      "user": "...",
+      "sodu": "...",
+      "pages": {...}
+    }
+"""
+
+import os, re, json, getpass, time, sys
+import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
+from flask import Flask, request, jsonify
 
 # ---------- CONFIG ----------
 BASE = "https://tuongtaccheo.com"
@@ -18,13 +41,11 @@ HEX_TOKEN_RE = re.compile(r'\b([A-Fa-f0-9]{20,64})\b')
 SODU_RE = re.compile(r'"sodu"\s*[:=]\s*["\']?([0-9,\.]+)["\']?', re.I)
 SODU_TEXT_RE = re.compile(r'(?:số\s*dư|sodu|xu)[^\d]{0,10}([0-9\.,]{2,})', re.I)
 
-
 def safe_get(s, url, **kw):
     try:
         return s.get(url, timeout=15, **kw)
     except:
         return None
-
 
 def safe_post(s, url, data=None, **kw):
     try:
@@ -32,44 +53,31 @@ def safe_post(s, url, data=None, **kw):
     except:
         return None
 
-
 def parse_login_form(html, base_url):
     soup = BeautifulSoup(html or "", "html.parser")
     form = soup.find("form")
-    if not form:
-        return None
+    if not form: return None
     action = urljoin(base_url, form.get("action") or "")
     inputs, user_field, pass_field = {}, None, None
     for inp in form.find_all("input"):
         name = inp.get("name")
-        if not name:
-            continue
+        if not name: continue
         t = (inp.get("type") or "").lower()
-        if t == "password":
-            pass_field = name
-        elif t in ("text", "email"):
-            user_field = user_field or name
+        if t == "password": pass_field = name
+        elif t in ("text","email"): user_field = user_field or name
         inputs[name] = inp.get("value") or ""
-    return {
-        "action_url": action,
-        "inputs": inputs,
-        "user_field": user_field or "username",
-        "pass_field": pass_field or "password",
-    }
-
+    return {"action_url": action, "inputs": inputs, 
+            "user_field": user_field or "username", 
+            "pass_field": pass_field or "password"}
 
 def find_sodu_and_tokens(text):
     out = {}
-    if not text:
-        return out
+    if not text: return out
     m = SODU_RE.search(text) or SODU_TEXT_RE.search(text)
-    if m:
-        out["sodu"] = m.group(1)
+    if m: out["sodu"] = m.group(1)
     hexes = HEX_TOKEN_RE.findall(text)
-    if hexes:
-        out["hex_like"] = hexes
+    if hexes: out["hex_like"] = hexes
     return out
-
 
 def login_with_credentials(s, u, p):
     r = safe_get(s, LOGIN_PAGE)
@@ -81,86 +89,57 @@ def login_with_credentials(s, u, p):
         return safe_post(s, parsed["action_url"], data=payload)
     for url in COMMON_LOGIN_POSTS:
         r2 = safe_post(s, url, data={"username": u, "password": p})
-        if r2:
-            return r2
+        if r2: return r2
     return None
-
 
 def get_profile_info(s):
     accum, pages = {}, {}
     for p in PROFILE_PATHS:
         r = safe_get(s, urljoin(BASE, p))
-        if not r:
-            continue
+        if not r: continue
         pages[p] = r.status_code
         f = find_sodu_and_tokens(r.text)
-        for k, v in f.items():
-            if k not in accum:
-                accum[k] = v
-            elif isinstance(accum[k], list):
-                accum[k].extend(v)
+        for k,v in f.items():
+            if k not in accum: accum[k] = v
+            elif isinstance(accum[k], list): accum[k].extend(v)
     accum["pages"] = pages
     return accum
 
-
 def try_token(s, tk):
     r = safe_post(s, urljoin(BASE, "/logintoken.php"), data={"access_token": tk})
-    if not r:
-        return None
-    try:
-        return r.json()
-    except:
-        return {"raw": r.text}
-
+    if not r: return None
+    try: return r.json()
+    except: return {"raw": r.text}
 
 def attempt_tokens(s, tokens):
-    if not tokens:
-        return None
+    if not tokens: return None
     tried = set()
-    for tk in tokens[:MAX_TOKEN_ATTEMPTS]:
-        if not tk or tk in tried:
-            continue
+    for i, tk in enumerate(tokens[:MAX_TOKEN_ATTEMPTS]):
+        if not tk or tk in tried: continue
         tried.add(tk)
         res = try_token(s, tk)
         if res and res.get("status") == "success":
             return {"token": tk, "response": res}
     return None
 
-
-# ========== Vercel API Handler ==========
-def handler(request):
-    username = request.args.get("username")
-    password = request.args.get("password")
-
-    if not username or not password:
-        return {
-            "statusCode": 400,
-            "headers": {"Content-Type": "application/json"},
-            "body": json.dumps({"error": "username & password required"})
-        }
-
-    s = requests.Session()
-    s.headers.update(HEADERS)
+def login_api(username, password):
+    s = requests.Session(); s.headers.update(HEADERS)
 
     rpost = login_with_credentials(s, username, password)
     found = find_sodu_and_tokens(rpost.text) if rpost else {}
     profile_info = get_profile_info(s)
-    for k, v in profile_info.items():
-        if k == "pages":
-            continue
-        found.setdefault(k, v)
+    for k,v in profile_info.items():
+        if k == "pages": continue
+        found.setdefault(k,v)
 
     tokens = sorted(set(found.get("hex_like", [])), key=len, reverse=True)
     token_result = attempt_tokens(s, tokens)
 
     out = {
-        "co_token": False,
-        "token": None,
-        "use": username,
-        "mk": password,
-        "user": None,
-        "sodu": found.get("sodu"),
-        "pages": profile_info.get("pages", {}),
+        "co_token": False, "token": None,
+        "use": username, "mk": password,
+        "user": None, "sodu": found.get("sodu"),
+        "pages": profile_info.get("pages", {})
     }
 
     if token_result:
@@ -170,21 +149,25 @@ def handler(request):
             out["user"] = res["data"].get("user")
             out["sodu"] = res["data"].get("sodu")
 
-    return {
-        "statusCode": 200,
-        "headers": {"Content-Type": "application/json"},
-        "body": json.dumps(out, ensure_ascii=False)
-    }
+    return out
 
+# ---------- FLASK APP ----------
+app = Flask(__name__)
 
-# ========== Local Test ==========
+@app.route("/")
+def index():
+    return jsonify({"status": "ok", "message": "TTC Login API running"})
+
+@app.route("/login", methods=["POST"])
+def login_route():
+    data = request.get_json(force=True)
+    username = data.get("username")
+    password = data.get("password")
+    if not username or not password:
+        return jsonify({"error": "Missing username/password"}), 400
+    result = login_api(username, password)
+    return jsonify(result)
+
 if __name__ == "__main__":
-    from flask import Flask, request as flask_request
-
-    app = Flask(__name__)
-
-    @app.route("/api/login")
-    def login_route():
-        return handler(flask_request)
-
-    app.run("0.0.0.0", 5000)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
