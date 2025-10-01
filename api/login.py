@@ -1,6 +1,6 @@
 import requests, re, json
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin, parse_qs, urlparse
+from urllib.parse import urljoin
 
 # ---------- CONFIG ----------
 BASE = "https://tuongtaccheo.com"
@@ -129,9 +129,8 @@ def attempt_tokens(s, tokens):
 
 # ========== Vercel API Handler ==========
 def handler(request):
-    qs = parse_qs(urlparse(request["url"]).query)
-    username = qs.get("username", [None])[0]
-    password = qs.get("password", [None])[0]
+    username = request.args.get("username")
+    password = request.args.get("password")
 
     if not username or not password:
         return {
@@ -176,3 +175,16 @@ def handler(request):
         "headers": {"Content-Type": "application/json"},
         "body": json.dumps(out, ensure_ascii=False)
     }
+
+
+# ========== Local Test ==========
+if __name__ == "__main__":
+    from flask import Flask, request as flask_request
+
+    app = Flask(__name__)
+
+    @app.route("/api/login")
+    def login_route():
+        return handler(flask_request)
+
+    app.run("0.0.0.0", 5000)
